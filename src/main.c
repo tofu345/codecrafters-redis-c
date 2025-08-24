@@ -11,7 +11,7 @@ int main() {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
-	
+
 	int server_fd;
     socklen_t client_addr_len;
 	struct sockaddr_in client_addr;
@@ -56,12 +56,14 @@ int main() {
     }
 	printf("Client connected\n");
 
-    char* msg = "+PONG\r\n";
-    size_t msglen = strlen(msg);
-    size_t n = send(conn_fd, msg, msglen, 0);
-    if (n == -1) {
-		printf("accept connection failed: %s \n", strerror(errno));
-        return 1;
+    while (1) {
+        char* msg = "+PONG\r\n";
+        size_t msglen = strlen(msg);
+        size_t n = send(conn_fd, msg, msglen, 0);
+        if (n == -1) {
+            printf("read from connection failed: %s \n", strerror(errno));
+            return 1;
+        }
     }
 
     close(conn_fd);
