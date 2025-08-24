@@ -12,7 +12,8 @@ int main() {
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
 	
-	int server_fd, client_addr_len;
+	int server_fd;
+    socklen_t client_addr_len;
 	struct sockaddr_in client_addr;
 
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -48,9 +49,22 @@ int main() {
 	printf("Waiting for a client to connect...\n");
 	client_addr_len = sizeof(client_addr);
 
-	accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
+	int conn_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
+    if (conn_fd == -1) {
+		printf("accept connection failed: %s \n", strerror(errno));
+        return 1;
+    }
 	printf("Client connected\n");
 
+    char* msg = "+PONG\r\n";
+    size_t msglen = strlen(msg);
+    size_t n = send(conn_fd, msg, msglen, 0);
+    if (n == -1) {
+		printf("accept connection failed: %s \n", strerror(errno));
+        return 1;
+    }
+
+    close(conn_fd);
 	close(server_fd);
 
 	return 0;
