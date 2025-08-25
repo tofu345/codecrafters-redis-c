@@ -1,4 +1,5 @@
-// from: https://benhoyt.com/writings/hash-table-in-c/
+// copied from github.com/tofu345/hash-table
+// based on https://benhoyt.com/writings/hash-table-in-c/
 
 #ifndef HT_H
 #define HT_H
