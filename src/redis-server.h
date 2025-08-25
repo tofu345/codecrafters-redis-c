@@ -3,11 +3,14 @@
 
 #include <stdint.h>
 
+#include "hash-table/ht.h"
+
 #define NUM_WORKERS 5
 
 typedef struct {
     int fd;
     uint16_t port;
+    ht* store;
 } server;
 
 // create `server` and bind to `port`

@@ -22,6 +22,13 @@ struct {
 pthread_mutex_t jobs_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t new_jobs_cond = PTHREAD_COND_INITIALIZER;
 
+typedef struct {
+    int id;
+    ht* store;
+} thread_data;
+
+pthread_mutex_t store_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static void
 exit_err(const char* msg) {
     printf("err: %s", msg);
@@ -33,6 +40,7 @@ server_create(uint16_t port) {
     server* s = malloc(sizeof(server));
     s->port = port;
 	s->fd = socket(AF_INET, SOCK_STREAM, 0);
+    s->store = ht_create();
 	if (s->fd == -1) {
 		printf("socket creation failed: %s\n", strerror(errno));
 		return NULL;
@@ -60,70 +68,13 @@ server_create(uint16_t port) {
     return s;
 }
 
-void server_destroy(server* s) {
-    free(s);
-}
+void server_destroy(server* s) { free(s); }
 
 void
 server_close(server* s) {
     close(s->fd);
     free(s);
 }
-
-// static size_t
-// pos_clrf(const char* buf, size_t buf_len) {
-//     size_t i = 0;
-//     for (; (i + 1) < buf_len; i++) {
-//         if (buf[i] == '\r' && buf[i + 1] == '\n')
-//             return i + 1;
-//     }
-//     return 0;
-// }
-//
-// static char*
-// parse_element(size_t* pos, const char* buf, size_t buf_len) {
-//     const char* buf_ = buf + *pos;
-//     switch(buf_[0]) {
-//         case '+':
-//             size_t len = pos_clrf(buf_, buf_len);
-//             if (len == -1) {
-//                 printf("NULL: %s", buf);
-//                 return NULL;
-//             }
-//
-//             char* elem = malloc((len - 1) * sizeof(char));
-//             strncpy(elem, buf_, len);
-//             elem[len - 1] = '\0';
-//             printf("elem %s\n", elem);
-//             return elem;
-//
-//         default:
-//             printf("parse_element: RESP data types %c not handled in %s\n", buf[0], buf);
-//             return NULL;
-//     }
-// }
-//
-// static int
-// parse(const char* buf, size_t buf_len, char** elems, size_t* resp_len) {
-//     size_t pos = 1;
-//     switch(buf[0]) {
-//         case '*':
-//             *resp_len = atoi(buf + 1);
-//             if (*resp_len == 0)
-//                 return NULL;
-//
-//             pos += pos_clrf(buf, buf_len);
-//             elems = malloc(*resp_len * sizeof(char*));
-//             for (int i = 0; i < *resp_len; i++)
-//                 elems[i] = parse_element(&pos, buf, buf_len);
-//
-//             return 0;
-//
-//         default:
-//             printf("RESP data types %c not handled\n", buf[0]);
-//             return -1;
-//     }
-// }
 
 static int
 send_msg(const int worker_id, const int fd, const char* msg) {
@@ -139,10 +90,10 @@ send_msg(const int worker_id, const int fd, const char* msg) {
 
 static void*
 worker(void* arg) {
-    int id = (uintptr_t)arg; // :p
+    thread_data* td = arg;
     size_t nrecv, nsend, buflen = 100;
-    // malloc?
-    char buf[buflen] = {};
+    char buf[buflen] = {}; // malloc?
+    resp *data, *cmd;
 
     while(1) {
         pthread_mutex_lock(&jobs_mutex);
@@ -156,50 +107,97 @@ worker(void* arg) {
 
         struct pollfd pfd = { fd, POLLIN };
 
-        printf("worker %d: handling connection (fd: %d)\n", id, fd);
+        printf("worker %d: handling connection (fd: %d)\n", td->id, fd);
 
         do {
             nrecv = recv(fd, buf, buflen, 0);
             if (nrecv == -1) {
                 printf("worker %d: read from connection (fd: %d) failed: %s\n",
-                        id, fd, strerror(errno));
+                        td->id, fd, strerror(errno));
                 break;
             } else if (nrecv == 0) {
-                printf("worker %d: recieved 0 bytes\n", id);
+                printf("worker %d: recieved 0 bytes\n", td->id);
                 break;
             } else
-                printf("worker %d: recieved %zd bytes ", id, nrecv);
+                printf("worker %d: recieved %zd bytes ", td->id, nrecv);
 
-            resp* data = parse(buf);
+            data = parse(buf);
             resp_display(data);
 
-            resp* cmd = data->raw[0];
+            cmd = data->raw[0];
+            if (resp_str_is(cmd, "PING")) {
+                send_msg(td->id, fd, "+PONG\r\n");
 
-            if (strcmp("PING", (char*)cmd->raw) == 0) {
-                if (send_msg(id, fd, "+PONG\r\n") != 0)
-                    break;
-
-            } else if (strcmp("ECHO", (char*)cmd->raw) == 0) {
+            } else if (resp_str_is(cmd, "ECHO")) {
                 if (data->len < 2) {
-                    send_msg(id, fd, "-invalid ECHO command\r\n");
+                    send_msg(td->id, fd, "-invalid ECHO command\r\n");
                     continue;
                 }
 
                 resp* echo = data->raw[1];
-                char* msg = calloc(echo->len + 10, sizeof(char));
+                char* msg = calloc(echo->len + 15, sizeof(char)); // better safe than sorry
                 if (sprintf(msg, "$%d\r\n%s\r\n",
                             echo->len, (char*)echo->raw) == -1) {
                     close(fd);
-                    printf("worker %d: asprintf response failed, quitting", id);
+                    resp_destroy(data);
+                    printf("worker %d: asprintf response failed, quitting", td->id);
                     return NULL;
                 }
-                int err = send_msg(id, fd, msg);
+                send_msg(td->id, fd, msg);
                 free(msg);
-                if (err != 0) break;
+
+            } else if (resp_str_is(cmd, "SET")) {
+                if (data->len < 3) {
+                    send_msg(td->id, fd, "-invalid SET command\r\n");
+                    continue;
+                }
+
+                pthread_mutex_lock(&store_mutex);
+                resp *key = data->raw[1],
+                     *val = data->raw[2];
+                char* val_str = strdup((char*)val->raw);
+
+                if (ht_set(td->store, (char*)key->raw, val_str) == NULL) {;
+                    pthread_mutex_unlock(&store_mutex);
+                    close(fd);
+                    resp_destroy(data);
+                    printf("worker %d: ht_set failed, quitting", td->id);
+                    return NULL;
+                }
+
+                pthread_mutex_unlock(&store_mutex);
+
+                send_msg(td->id, fd, "+OK\r\n");
+
+            } else if (resp_str_is(cmd, "GET")) {
+                if (data->len < 2) {
+                    send_msg(td->id, fd, "-invalid GET command\r\n");
+                    continue;
+                }
+
+                pthread_mutex_lock(&store_mutex);
+                resp *key = data->raw[1];
+                char* val = ht_get(td->store, (char*)key->raw);
+                if (val == NULL) {
+                    pthread_mutex_unlock(&store_mutex);
+                    send_msg(td->id, fd, "$-1\r\n");
+                    continue;
+                }
+                pthread_mutex_unlock(&store_mutex);
+
+                size_t len = strlen(val);
+                char* msg = calloc(len + 15, sizeof(char));
+                if (sprintf(msg, "$%zu\r\n%s\r\n", len, val) == -1) {
+                    close(fd);
+                    resp_destroy(data);
+                    printf("worker %d: asprintf response failed, quitting", td->id);
+                    return NULL;
+                }
+                send_msg(td->id, fd, msg);
+                free(msg);
 
             } else {
-                if (send_msg(id, fd, "+PONG\r\n") != 0)
-                    break;
+                send_msg(td->id, fd, "-command not handled\r\n");
             }
 
             resp_destroy(data);
@@ -219,8 +217,12 @@ server_listen(server* s) {
     printf("listening on port: %d\n", s->port);
 
     pthread_t threads[NUM_WORKERS];
+    thread_data* tds[NUM_WORKERS];
     for (uintptr_t i = 0; i < NUM_WORKERS; i++) {
-        pthread_create(threads+i, NULL, &worker, (void*)i);
+        tds[i] = malloc(sizeof(thread_data));
+        tds[i]->store = s->store;
+        tds[i]->id = (int)i;
+        pthread_create(threads+i, NULL, &worker, (void*)tds[i]);
     }
 
     while (1) {
@@ -245,6 +247,11 @@ server_listen(server* s) {
         jobs.len++;
         pthread_cond_signal(&new_jobs_cond);
         pthread_mutex_unlock(&jobs_mutex);
+    }
+
+    // why not, okay?
+    for (uintptr_t i = 0; i < NUM_WORKERS; i++) {
+        free(tds[i]);
     }
     return 0;
 }

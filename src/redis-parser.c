@@ -1,5 +1,6 @@
 #include "redis-parser.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,12 +25,17 @@ resp_display(resp* data) {
     puts("");
 }
 
+bool resp_str_is(resp* data, char* msg) {
+    return strcasecmp((char*)data->raw, msg) == 0;
+}
+
 void
 resp_destroy(resp* data) {
     switch (data->t) {
         case '+':
         case '$':
-            free(data->raw);
+            if (data->len != -1)
+                free(data->raw);
             break;
         case '*':
             for (int i = 0; i < data->len; i++) {
@@ -47,6 +53,7 @@ get_char(parser* p) {
     return *(p->input++);
 }
 
+// return string of `len` and incr pointer to end
 static char*
 get_str(parser* p, size_t len) {
     char* raw = malloc((len + 1) * sizeof(char));
@@ -57,7 +64,7 @@ get_str(parser* p, size_t len) {
     return raw;
 }
 
-// read `[elem.t][elem.raw]\r\n` and return pointer to end
+// read `[elem.t][elem.raw]\r\n` and incr pointer to end
 static resp*
 parse_simple(parser* p) {
     size_t i = 1;
@@ -85,20 +92,32 @@ _parse(parser* p) {
         case '*': // array
             data->len = atoi((char*)data->raw);
             free(data->raw);
-            if (data->len == 0)
+            if (data->len == 0) {
+                free(data);
                 return NULL;
+            }
 
             data->raw = calloc(data->len, sizeof(resp*));
             for (int i = 0; i < data->len; i++) {
                 data->raw[i] = _parse(p);
+                if (data->raw[i] == NULL) {
+                    data->len = i + 1;
+                    resp_destroy(data);
+                    return NULL;
+                }
             }
             break;
 
         case '$':
             data->len = atoi((char*)data->raw);
             free(data->raw);
-            if (data->len == 0)
+            if (data->len == 0) {
+                free(data);
                 return NULL;
+            } else if (data->len == -1) {
+                *((char*)data->raw) = '\0';
+                break;
+            }
 
             data->raw = (void**)get_str(p, data->len);
             p->input += 2; // skip \r\n
@@ -121,7 +140,10 @@ _resp_display(resp* data) {
             printf("+%s", (char*)data->raw);
             break;
         case '$':
-            printf("$%.*s", data->len, (char*)data->raw);
+            if (data->len == -1)
+                printf("$(null)");
+            else
+                printf("$%.*s", data->len, (char*)data->raw);
             break;
         case '*':
             printf("*[");

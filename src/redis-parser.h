@@ -4,18 +4,20 @@
 // parser for the RESP protocol
 
 #include <stddef.h>
-
-// '*' = Array
-// '$' = Bulk
-// '+' = String
-// ':' = Integer
-// '-' = Error
+#include <stdbool.h>
 
 typedef struct {
-    char t; // if ':' (Integer) `raw` will contain parsed integer
+    // '*' Array.
+    // '$' Bulk.
+    // '+' String.
+    // ':' Integer, `raw` will contain parsed integer.
+    // '-' Error.
+    char t;
     int len;
     void** raw;
 } resp;
+
+bool resp_str_is(resp* data, char* msg);
 
 void resp_display(resp* data);
 
