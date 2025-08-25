@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "hash-table/ht.h"
+#include "ht.h"
 
 #define NUM_WORKERS 5
 
