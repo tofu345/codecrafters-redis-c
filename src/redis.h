@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define NUM_WORKERS 5
+
 typedef struct {
     int fd;
     uint16_t port;
