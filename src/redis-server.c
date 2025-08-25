@@ -14,6 +14,9 @@
 #include "redis-server.h"
 #include "redis-parser.h"
 
+#define _GNU_SOURCE // use asprintf()
+#define __STDC_WANT_LIB_EXT2 1
+
 struct {
     int fds[NUM_WORKERS]; // sockets to connections
     size_t len;
