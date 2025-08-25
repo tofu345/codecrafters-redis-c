@@ -14,9 +14,6 @@
 #include "redis-server.h"
 #include "redis-parser.h"
 
-#define _GNU_SOURCE // use asprintf()
-#define __STDC_WANT_LIB_EXT2 1
-
 struct {
     int fds[NUM_WORKERS]; // sockets to connections
     size_t len;
@@ -189,8 +186,8 @@ worker(void* arg) {
                 }
 
                 resp* echo = data->raw[1];
-                char* msg;
-                if (asprintf(&msg, "$%d\r\n%s\r\n",
+                char* msg = calloc(echo->len + 10, sizeof(char));
+                if (sprintf(msg, "$%d\r\n%s\r\n",
                             echo->len, (char*)echo->raw) == -1) {
                     close(fd);
                     printf("worker %d: asprintf response failed, quitting", id);
