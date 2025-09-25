@@ -103,12 +103,13 @@ _parse(parser *p) {
         case r_String: return elem;
 
         case r_Integer:
-            elem.data.integer = strtol(elem.data.string, NULL, 10);
+            elem.length = strtol(elem.data.string, NULL, 10);
             if (errno == ERANGE) {
                 resp_destroy(elem);
                 return (resp){};
             }
             free(elem.data.string);
+            elem.data.integer = elem.length;
             elem.length = 1;
             return elem;
 
