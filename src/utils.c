@@ -12,12 +12,12 @@ void die(const char* format, ...) {
     _errno = errno;
 
     va_start(ap, format);
-    vfprintf(stdout, format, ap);
+    vfprintf(stderr, format, ap);
     va_end(ap);
 
     if (format[0] && format[strlen(format)-1] == ':')
-        fprintf(stdout, " %s", strerror(_errno));
-    fputc('\n', stdout);
+        fprintf(stderr, " %s", strerror(_errno));
+    fputc('\n', stderr);
 
     exit(1);
 }

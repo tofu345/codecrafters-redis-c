@@ -11,32 +11,31 @@ typedef struct {
     size_t length, cursor;
 } parser;
 
-resp _parse(parser *p);
+// 0 on success
+int _parse(parser *p, resp *elem);
 
-resp
-parse(const char *input) {
+resp parse(const char *input) {
     parser p = { input, strlen(input) };
-    return _parse(&p);
+    resp result = {0};
+    if (_parse(&p, &result)) {
+        resp_destroy(&result);
+        return (resp){};
+    }
+    return result;
 }
 
-void
-resp_destroy(resp elem) {
-    switch (elem.type) {
+void resp_destroy(resp *elem) {
+    switch (elem->type) {
         case r_Error:
         case r_String:
-            free(elem.data.string);
-            return;
-
         case r_BulkString:
-            if (elem.length > 0)
-                free(elem.data.string);
             return;
 
         case r_Array:
-            for (int i = 0; i < elem.length; i++) {
-                resp_destroy(elem.data.array[i]);
+            for (int i = 0; i < elem->length; i++) {
+                resp_destroy(&elem->data.array[i]);
             }
-            free(elem.data.array);
+            free(elem->data.array);
             return;
 
         case r_Integer:
@@ -52,7 +51,7 @@ get_resp_type(parser *p) {
         case '-': return r_Error;
         case '$': return r_BulkString;
         case '*': return r_Array;
-        case ':': return r_Integer; // TODO: NOT IMPLEMENTED
+        case ':': return r_Integer;
         default:
             die("invalid resp type: '%c' in input: %s",
                     p->input[p->cursor], p->input);
@@ -60,141 +59,140 @@ get_resp_type(parser *p) {
     }
 }
 
-// malloc string of size [len] from `p.input[from]`
-static char*
-string_from(parser *p, size_t from, size_t len) {
-    char *str = malloc((len + 1) * sizeof(char));
-    if (str == NULL) die("malloc");
-    strncpy(str, p->input + from, len);
-    str[len] = '\0';
-    return str;
-}
+// read (+|-|$|*|:)/r/n
+static int
+read_start_control_sequence(parser *p, resp *elem) {
+    resp_type type = get_resp_type(p);
+    ++p->cursor; // skip type
 
-static resp
-read_until_terminator(parser *p) {
-    size_t i = p->cursor + 1;
+    size_t i = p->cursor;
     for (; i + 1 < p->length; i++) {
         if (p->input[i] == '\r' && p->input[i + 1] == '\n')
             break;
     }
 
     // invalid [p.input]: string too short or missing terminator
-    if (i + 1 > p->length) {
+    if (i + 1 >= p->length) {
         printf("invalid input: %s", p->input);
-        return (resp){};
+        return -1;
     }
 
-    size_t str_length = i - p->cursor - 1;
-    resp elem = {
-        .type = get_resp_type(p),
+    size_t str_length = i - p->cursor;
+    *elem = (resp) {
+        .type = type,
         .length = str_length,
-        .data = { .string = string_from(p, p->cursor + 1, str_length) }
+        .data = { .string = p->input + p->cursor }
     };
-    p->cursor += str_length + 3; // skip type, '\r\n'
-    return elem;
+    p->cursor = i + 2; // skip '\r\n'
+    return 0;
 }
 
-resp
-_parse(parser *p) {
-    resp elem = read_until_terminator(p);
-    if (elem.type == 0) return (resp){};
+int _parse(parser *p, resp *elem) {
+    int err = read_start_control_sequence(p, elem);
+    if (err) { return err; }
 
-    switch (elem.type) {
-        case r_String: return elem;
+    char *endptr;
+    const char *end = elem->data.string + elem->length;
+    switch (elem->type) {
+        case r_String:
+            return 0;
 
         case r_Integer:
-            elem.length = strtol(elem.data.string, NULL, 10);
-            if (errno == ERANGE) {
-                resp_destroy(elem);
-                return (resp){};
+            elem->data.integer = strtol(elem->data.string, &endptr, 10);
+            if (endptr != end || errno == ERANGE) {
+                elem->data.string = NULL;
+                return -1;
             }
-            free(elem.data.string);
-            elem.data.integer = elem.length;
-            elem.length = 1;
-            return elem;
+            elem->length = 1;
+            return 0;
 
         case r_Array:
-            elem.length = strtol(elem.data.string, NULL, 10);
-            if (errno == ERANGE) {
-                resp_destroy(elem);
-                return (resp){};
+            elem->length = strtol(elem->data.string, &endptr, 10);
+            if (endptr != end || errno == ERANGE) {
+                elem->data.array = NULL;
+                return -1;
             }
-            free(elem.data.string);
 
-            elem.data.array = malloc(elem.length * sizeof(resp));
-            for (int i = 0; i < elem.length; i++) {
-                elem.data.array[i] = _parse(p);
-                if (elem.data.array[i].type == 0) {
-                    elem.length = i + 1;
+            elem->data.array = malloc(elem->length * sizeof(resp));
+            if (elem->data.array == NULL) {
+                elem->length = 0;
+                return -1;
+            }
+
+            resp *cur;
+            for (int i = 0; i < elem->length; i++) {
+                cur = &elem->data.array[i];
+                int res = _parse(p, cur);
+                if (cur->type == 0) {
+                    // free previous elements
+                    elem->length = i;
                     resp_destroy(elem);
-                    return (resp){};
+                    elem->data.array = NULL;
+                    return -1;
                 }
             }
-            return elem;
+            return 0;
 
         case r_BulkString:
-            elem.length = strtol(elem.data.string, NULL, 10);
-            if (errno == ERANGE) {
-                resp_destroy(elem);
-                return (resp){};
-            }
-            free(elem.data.string);
-
-            if (elem.length == 0) {
-                p->cursor += 2;
-                elem.data.string = NULL;
-                return elem;
+            elem->length = strtol(elem->data.string, &endptr, 10);
+            if (endptr != end || errno == ERANGE) {
+                elem->data.string = NULL;
+                return -1;
             }
 
-            elem.data.string = string_from(p, p->cursor, elem.length);
-            p->cursor += elem.length + 2;
-            return elem;
+            if (elem->length == 0) {
+                p->cursor += 2; // skip /r/n
+                elem->data.string = NULL;
+                return 0;
+            }
+
+            elem->data.string = p->input + p->cursor;
+            p->cursor += elem->length + 2; // skip data and /r/n
+            return 0;
 
         default:
             printf("RESP type %d not handled. cur: %zu '%s'",
-                    elem.type, p->cursor, p->input);
-            return (resp){};
+                    elem->type, p->cursor, p->input);
+            return -1;
     }
 }
 
-void
-_resp_display(resp elem) {
-    switch (elem.type) {
+void _resp_display(resp *elem) {
+    switch (elem->type) {
         case r_String:
         case r_Error:
-            printf("+%s", elem.data.string);
+            printf("+%.*s", elem->length, elem->data.string);
             return;
 
         case r_BulkString:
-            if (elem.length == 0)
+            if (elem->length == 0)
                 printf("$(empty)");
             else
-                printf("$%.*s", elem.length, elem.data.string);
+                printf("$%.*s", elem->length, elem->data.string);
             return;
 
         case r_Array:
             printf("*[");
-            for (size_t i = 0; i < elem.length - 1; i++) {
-                _resp_display(elem.data.array[i]);
+            for (size_t i = 0; i < elem->length - 1; i++) {
+                _resp_display(&elem->data.array[i]);
                 printf(", ");
             }
-            if (elem.length >= 1)
-                _resp_display(elem.data.array[elem.length - 1]);
+            if (elem->length >= 1)
+                _resp_display(&elem->data.array[elem->length - 1]);
             printf("]");
             return;
 
         case r_Integer:
-            printf("%lld", elem.data.integer);
+            printf(":%lld", elem->data.integer);
             return;
 
         default:
-            die("RESP type %d not handled.", elem.type);
+            die("RESP type %d not handled.", elem->type);
             return;
     }
 }
 
-void
-resp_display(resp data) {
+void resp_display(resp *data) {
     _resp_display(data);
     puts("");
 }

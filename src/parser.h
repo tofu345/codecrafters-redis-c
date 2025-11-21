@@ -7,6 +7,8 @@
 
 typedef struct resp resp;
 
+#define STRING(el) (el.type == r_String || el.type == r_BulkString)
+
 typedef enum {
     r_String = 1,
     r_Array,
@@ -16,7 +18,7 @@ typedef enum {
 } resp_type;
 
 typedef union {
-    char *string;
+    const char *string;
     resp *array;
     long long integer;
 } resp_data;
@@ -31,7 +33,7 @@ struct resp {
 
 // Returns a [resp] with [resp.type] = 0 on err.
 resp parse(const char *input);
-void resp_destroy(resp data);
+void resp_destroy(resp *data);
 
 // print data to stdout
-void resp_display(resp data);
+void resp_display(resp *data);
