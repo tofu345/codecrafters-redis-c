@@ -9,7 +9,7 @@
 #include "server.h"
 #include "parser.h"
 
-int handler(const int conn_fd, char *data, size_t length);
+int handler(const int conn_fd, const char *data);
 int echo_handler(const int conn_fd, resp req);
 int set_handler(const int conn_fd, resp req);
 int get_handler(const int conn_fd, resp req);
@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
 
 #define STR_IS(msg, r) strncasecmp(msg, r.data.string, r.length) == 0
 
-int handler(const int conn_fd, char *data, size_t length) {
+int handler(const int conn_fd, const char *data) {
     resp req = parse(data);
     if (req.type == 0 || req.type != r_Array || !STRING(req.data.array[0])) {
         return send_msg(conn_fd, "-Invalid command\r\n");
@@ -77,7 +77,6 @@ int echo_handler(const int conn_fd, resp req) {
     resp echo = req.data.array[1];
     char* msg = NULL;
     if (asprintf(&msg, "$%d\r\n%s\r\n", echo.length, echo.data.string) == -1) {
-        resp_destroy(&req);
         return send_msg(conn_fd, "-Error sending message\r\n");
     }
 
@@ -92,10 +91,12 @@ int get_handler(const int conn_fd, resp req) {
     }
 
     resp key = req.data.array[1];
-    pthread_mutex_lock(&store_mutex);
     uint64_t hash = hash_fnv1a_(key.data.string, key.length);
+
+    pthread_mutex_lock(&store_mutex);
     char* val = ht_get_hash(store, hash);
     pthread_mutex_unlock(&store_mutex);
+
     if (val == NULL) {
         return send_msg(conn_fd, "$-1\r\n");
     }
@@ -112,7 +113,7 @@ int get_handler(const int conn_fd, resp req) {
 }
 
 int set_handler(const int conn_fd, resp req) {
-    if (req.length < 3
+    if (req.length != 3
             || !STRING(req.data.array[1])
             || !STRING(req.data.array[2])) {
         return send_msg(conn_fd, "-Invalid SET command\r\n");
@@ -125,8 +126,9 @@ int set_handler(const int conn_fd, resp req) {
         return send_msg(conn_fd, "-Could not execute SET command\r\n");
     }
 
-    pthread_mutex_lock(&store_mutex);
     uint64_t hash = hash_fnv1a_(key.data.string, key.length);
+
+    pthread_mutex_lock(&store_mutex);
     const char *res = ht_set_hash(store, key.data.string, val_str, hash);
     pthread_mutex_unlock(&store_mutex);
 
