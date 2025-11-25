@@ -17,37 +17,35 @@
 // Methodology:
 //
 // The main thread accept incoming requests and attempts to append them to
-// [jobs] where they are popped and handled.  If [jobs] is full, the main
-// thread waits (sleeps) until a worker is available.
+// [jobs], where they are popped and handled by workers.  If [jobs] is full,
+// the main thread waits (sleeps) until a worker is available.
 
-#define DEBUG
+// #define DEBUG
 
-struct worker_data {
+struct worker {
     const pthread_t thread;
     int id;
     int fd; // current connection being handled
 };
 
 struct server {
+    int jobs[MAX_JOBS]; // waiting connections
+    size_t num_jobs;
+
     int fd; // server file descr
     handler_func *handler;
-    struct worker_data *workers;
+    cleanup_func *user_cleanup_fn;
+    struct worker *workers;
 } serv = {0};
 
-struct {
-    int fds[MAX_JOBS]; // waiting connections
-    size_t len;
-} jobs = {0};
-
+// used to access jobs global variable
 pthread_mutex_t jobs_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// used to access jobs global variable
+// used by main thread to wake up asleep worker threads
 pthread_cond_t new_jobs_cond = PTHREAD_COND_INITIALIZER;
 
 // used by main thread to wait for available workers when jobs is full
 pthread_cond_t worker_available_cond = PTHREAD_COND_INITIALIZER;
-
-cleanup_func *user_cleanup_fn = NULL;
 
 void server_cleanup();
 static void *worker(void *w);
@@ -59,7 +57,6 @@ int listen_and_serve(uint16_t port, handler_func *handler_fn,
     // another server is running.
     if (serv.workers) { return -1; }
 
-    user_cleanup_fn = cleanup_fn;
     signal(SIGINT, sigint_handler);
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -85,7 +82,8 @@ int listen_and_serve(uint16_t port, handler_func *handler_fn,
     serv = (struct server) {
         .fd = server_fd,
         .handler = handler_fn,
-        .workers = calloc(NUM_WORKERS, sizeof(struct worker_data)),
+        .user_cleanup_fn = cleanup_fn,
+        .workers = calloc(NUM_WORKERS, sizeof(struct worker)),
     };
     if (serv.workers == NULL) { die("calloc workers"); }
 
@@ -115,13 +113,13 @@ int listen_and_serve(uint16_t port, handler_func *handler_fn,
 #endif
 
         pthread_mutex_lock(&jobs_mutex);
-        if (jobs.len >= MAX_JOBS) {
+        if (serv.num_jobs == MAX_JOBS) {
             // wait until a worker is available
             pthread_cond_wait(&worker_available_cond, &jobs_mutex);
         }
 
-        jobs.fds[jobs.len] = conn_fd;
-        jobs.len++;
+        serv.jobs[serv.num_jobs] = conn_fd;
+        serv.num_jobs++;
 
         pthread_cond_signal(&new_jobs_cond);
         pthread_mutex_unlock(&jobs_mutex);
@@ -132,12 +130,13 @@ int listen_and_serve(uint16_t port, handler_func *handler_fn,
     return 0;
 }
 
-#define WORKER(w) ((struct worker_data *)w)
+#define WORKER(w) ((struct worker *)w)
 
 static void cleanup_worker(void *w);
 
 static void *
 worker(void *w) {
+    int fd;
     size_t nrecv, buflen = 1024;
     char *buf = malloc(buflen * sizeof(char));
     if (buf == NULL) {
@@ -148,7 +147,7 @@ worker(void *w) {
 
     while(1) {
         pthread_mutex_lock(&jobs_mutex);
-        if (jobs.len <= 0) {
+        if (serv.num_jobs == 0) {
             // signal to main thread that a worker is available
             pthread_cond_signal(&worker_available_cond);
 
@@ -156,10 +155,10 @@ worker(void *w) {
             // jobs.
             do {
                 pthread_cond_wait(&new_jobs_cond, &jobs_mutex);
-            } while (jobs.len <= 0);
+            } while (serv.num_jobs == 0);
         }
 
-        int fd = jobs.fds[--jobs.len];
+        fd = serv.jobs[--serv.num_jobs];
         pthread_mutex_unlock(&jobs_mutex);
         WORKER(w)->fd = fd;
 
@@ -183,6 +182,7 @@ worker(void *w) {
                 printf("worker %d: recieved %zd bytes\n", WORKER(w)->id, nrecv);
             }
 #else
+            // close connection: on failure (nrecv is -1) or on EOF (nrecv is 0)
             if (nrecv <= 0) {
                 break;
             }
@@ -210,7 +210,6 @@ int send_msg(const int fd, const char *format, ...) {
 
     size_t msglen = strlen(msg),
            nsend = send(fd, msg, msglen, 0);
-
     free(msg);
     if (nsend == -1) {
         printf("send on fd %d failed: %s\n", fd, strerror(errno));
@@ -239,8 +238,8 @@ static void cleanup_worker(void *buf) {
 static void sigint_handler(int arg) {
     server_cleanup();
 
-    if (user_cleanup_fn) {
-        user_cleanup_fn();
+    if (serv.user_cleanup_fn) {
+        serv.user_cleanup_fn();
     }
 
     exit(0);

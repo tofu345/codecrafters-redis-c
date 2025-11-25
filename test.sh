@@ -6,8 +6,9 @@
 
 redis-cli set data something
 
-for index in {1..500}
+for index in {1..1000}
 do
     redis-cli get data &
     redis-cli ping &
+    redis-cli echo something_very_very_very_long &
 done
