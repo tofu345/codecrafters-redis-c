@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 #include "hash-table/ht.h"
 #include "server.h"
 #include "parser.h"
+#include "utils.h"
 
 int handler(const int conn_fd, const char *data);
 int echo_handler(const int conn_fd, resp req);
@@ -46,7 +48,14 @@ int handler(const int conn_fd, const char *data) {
     }
 
     resp cmd = req.data.array[0];
-    // printf("recieved: "); resp_display(&req);
+
+    // char *buf; size_t len;
+    // FILE *s = open_memstream(&buf, &len);
+    // if (s == NULL) { die("open_memstream:"); }
+    // resp_display(&req, s);
+    // fclose(s);
+    // printf("recieved: %s\n", buf);
+    // free(buf);
 
     int err;
     if (STR_IS("PING", cmd)) {
@@ -97,7 +106,7 @@ int get_handler(const int conn_fd, resp req) {
     char* val = ht_get_hash(store, hash);
     pthread_mutex_unlock(&store_mutex);
 
-    if (val == NULL) {
+    if (errno == ENOKEY) {
         return send_msg(conn_fd, "$-1\r\n");
     }
 
@@ -129,10 +138,10 @@ int set_handler(const int conn_fd, resp req) {
     uint64_t hash = hash_fnv1a_(key.data.string, key.length);
 
     pthread_mutex_lock(&store_mutex);
-    const char *res = ht_set_hash(store, key.data.string, val_str, hash);
+    const char *res = ht_set_hash(store, (void *) key.data.string, val_str, hash);
     pthread_mutex_unlock(&store_mutex);
 
-    if (res == NULL) {
+    if (errno == ENOMEM) {
         return send_msg(conn_fd, "-Could not execute SET command\r\n");
     } else if (res != val_str) {
         free((char *) res); // previous value

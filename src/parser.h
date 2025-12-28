@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 typedef struct resp resp;
 
@@ -33,7 +34,7 @@ struct resp {
 
 // Returns a [resp] with [resp.type] = 0 on err.
 resp parse(const char *input);
-void resp_destroy(resp *data);
+void resp_destroy(resp *);
 
 // print data to stdout
-void resp_display(resp *data);
+void resp_display(resp *, FILE *);

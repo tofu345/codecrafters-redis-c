@@ -59,7 +59,7 @@ get_resp_type(parser *p) {
     }
 }
 
-// read (+|-|$|*|:)/r/n
+// read (+|-|$|*|:)(...)/r/n
 static int
 read_start_control_sequence(parser *p, resp *elem) {
     resp_type type = get_resp_type(p);
@@ -157,33 +157,35 @@ int _parse(parser *p, resp *elem) {
     }
 }
 
-void _resp_display(resp *elem) {
+void _resp_display(resp *elem, FILE *s) {
     switch (elem->type) {
         case r_String:
         case r_Error:
-            printf("+%.*s", elem->length, elem->data.string);
+            fprintf(s, "+%.*s", elem->length, elem->data.string);
             return;
 
         case r_BulkString:
             if (elem->length == 0)
-                printf("$(empty)");
+                fprintf(s, "$(empty)");
             else
-                printf("$%.*s", elem->length, elem->data.string);
+                fprintf(s, "$%.*s", elem->length, elem->data.string);
             return;
 
         case r_Array:
-            printf("*[");
-            for (size_t i = 0; i < elem->length - 1; i++) {
-                _resp_display(&elem->data.array[i]);
-                printf(", ");
+            fprintf(s, "*[");
+            int last = elem->length - 1;
+            for (size_t i = 0; i < last; i++) {
+                _resp_display(&elem->data.array[i], s);
+                fprintf(s, ", ");
             }
-            if (elem->length >= 1)
-                _resp_display(&elem->data.array[elem->length - 1]);
-            printf("]");
+            if (last >= 0) {
+                _resp_display(&elem->data.array[last], s);
+            }
+            fprintf(s, "]");
             return;
 
         case r_Integer:
-            printf(":%lld", elem->data.integer);
+            fprintf(s, ":%lld", elem->data.integer);
             return;
 
         default:
@@ -192,7 +194,6 @@ void _resp_display(resp *elem) {
     }
 }
 
-void resp_display(resp *data) {
-    _resp_display(data);
-    puts("");
+void resp_display(resp *data, FILE *stream) {
+    _resp_display(data, stream);
 }

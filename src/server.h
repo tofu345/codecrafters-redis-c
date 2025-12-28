@@ -3,9 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// #define DEBUG
+
 #define NUM_WORKERS 8   // number of worker threads
 #define BACKLOG     128 // server connection backlog, see: man 'listen(2)'
-#define MAX_JOBS    32
+#define MAX_JOBS    32  // max number of waiting accepted connections
 
 // do not call close on [conn_fd] as it is managed by the server.
 typedef int handler_func(const int conn_fd, const char *data);

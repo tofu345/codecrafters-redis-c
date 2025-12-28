@@ -20,8 +20,6 @@
 // [jobs], where they are popped and handled by workers.  If [jobs] is full,
 // the main thread waits (sleeps) until a worker is available.
 
-// #define DEBUG
-
 struct worker {
     const pthread_t thread;
     int id;
@@ -29,7 +27,7 @@ struct worker {
 };
 
 struct server {
-    int jobs[MAX_JOBS]; // waiting connections
+    int jobs[MAX_JOBS];
     size_t num_jobs;
 
     int fd; // server file descr
