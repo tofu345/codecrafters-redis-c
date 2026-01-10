@@ -86,7 +86,7 @@ int echo(struct worker *w, resp req) {
     resp echo = req.data.array[1];
     char* msg = NULL;
     if (asprintf(&msg, "$%d\r\n%s\r\n", echo.length, echo.data.string) == -1) {
-        return send_msg(w, "-Error sending message\r\n");
+        return send_msg(w, "-Error creating response\r\n");
     }
 
     int err = send_msg(w, msg);
@@ -113,7 +113,7 @@ int get(struct worker *w, resp req) {
     size_t len = strlen(val);
     char* msg = NULL;
     if (asprintf(&msg, "$%zu\r\n%s\r\n", strlen(val), val) == -1) {
-        return send_msg(w, "-Error sending message\r\n");
+        return send_msg(w, "-Error creating response\r\n");
     }
 
     int err = send_msg(w, msg);
