@@ -9,19 +9,22 @@
 #define BACKLOG     128 // server connection backlog, see: man 'listen(2)'
 #define MAX_JOBS    32  // max number of waiting accepted connections
 
-// do not call close on [conn_fd] as it is managed by the server.
-typedef int handler_func(const int conn_fd, const char *data);
+struct worker;
 
-typedef void cleanup_func(void);
+// request handler, called from a worker thread.
+typedef int (*handler_function) (struct worker *, const char *data);
 
-// wrapper around [send]
-int send_msg(const int conn_fd, const char* format, ...);
+// send a message over the connection.
+int send_msg(struct worker *, const char* format, ...);
+
+// perform any actions during server cleanup.
+typedef void (*cleanup_function) (void);
 
 // Create a server that binds to [port] and listen for requests with
-// NUM_WORKERS threads, responding to requests with [handler].
+// NUM_WORKERS worker threads, responding to requests with [handler].
 //
 // The server sets up a signal handler for SIGINT (Ctrl-c) to free all
-// resources and calls [cleanup_func] (if not NULL) before exiting.
+// resources and calls [cleanup] (if not NULL) before exiting.
 //
 // Only one can be run server per process.
-int listen_and_serve(uint16_t port, handler_func *, cleanup_func *);
+int listen_and_serve(uint16_t port, handler_function, cleanup_function);

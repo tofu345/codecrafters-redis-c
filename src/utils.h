@@ -1,4 +1,4 @@
 #pragma once
 
 // copied from dwm :p
-void die(const char* format, ...);
+_Noreturn void die(const char* format, ...);

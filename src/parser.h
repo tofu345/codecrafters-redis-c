@@ -4,37 +4,53 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 
-typedef struct resp resp;
-
-#define STRING(el) (el.type == r_String || el.type == r_BulkString)
-
 typedef enum {
+    // +OK\r\n
     r_String = 1,
-    r_Array,
-    r_BulkString,
-    r_Integer,
+
+    // -Error message\r\n
     r_Error,
+
+    // :[<+|->]<value>\r\n
+    r_Integer,
+
+    // $<length>\r\n<data>\r\n
+    r_BulkString,
+
+    // *<number-of-elements>\r\n<element-1>...<element-n>\r\n
+    r_Array,
 } resp_type;
 
 typedef union {
     const char *string;
-    resp *array;
-    long long integer;
+    struct resp *array;
+    int64_t integer;
 } resp_data;
 
-struct resp {
+typedef struct resp {
+    // 0 if invalid.
     resp_type type;
-    int length; // if r_String, r_BulkString, r_Error: length of string.
-                // if r_Array: number of elements.
-                // otherwise: 1.
-    resp_data data;
-};
 
-// Returns a [resp] with [resp.type] = 0 on err.
+    // String, String, r_Error - length of string.
+    // Array - the number of elements.
+    // otherwise 1.
+    int length;
+
+    resp_data data;
+} resp;
+
+// parse `resp` from [input]. [resp.type] is 0 on err.
 resp parse(const char *input);
+
+// free `resp`.
 void resp_destroy(resp *);
 
-// print data to stdout
-void resp_display(resp *, FILE *);
+// print `resp` into [stream].
+void resp_display(resp *, FILE *stream);
+
+static inline bool string(resp r) {
+    return r.type == r_String || r.type == r_BulkString;
+}

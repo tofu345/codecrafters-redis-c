@@ -21,36 +21,39 @@
 // the main thread waits (sleeps) until a worker is available.
 
 struct worker {
+    int fd;
+    char *data;
     const pthread_t thread;
     int id;
-    int fd; // current connection being handled
 };
 
 struct server {
+    int fd; // server file descriptor
+
     int jobs[MAX_JOBS];
     size_t num_jobs;
 
-    int fd; // server file descr
-    handler_func *handler;
-    cleanup_func *user_cleanup_fn;
     struct worker *workers;
+
+    handler_function handler;
+    cleanup_function cleanup; // user defined.
 } serv = {0};
 
 // used to access jobs global variable
-pthread_mutex_t jobs_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t jobs_mutex;
 
 // used by main thread to wake up asleep worker threads
-pthread_cond_t new_jobs_cond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t new_jobs_cond;
 
 // used by main thread to wait for available workers when jobs is full
-pthread_cond_t worker_available_cond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t worker_available_cond;
 
 void server_cleanup();
 static void *worker(void *w);
 static void sigint_handler(int arg);
 
-int listen_and_serve(uint16_t port, handler_func *handler_fn,
-                     cleanup_func *cleanup_fn) {
+int listen_and_serve(uint16_t port, handler_function handler,
+                     cleanup_function cleanup) {
 
     // another server is running.
     if (serv.workers) { return -1; }
@@ -79,8 +82,8 @@ int listen_and_serve(uint16_t port, handler_func *handler_fn,
 
     serv = (struct server) {
         .fd = server_fd,
-        .handler = handler_fn,
-        .user_cleanup_fn = cleanup_fn,
+        .handler = handler,
+        .cleanup = cleanup,
         .workers = calloc(NUM_WORKERS, sizeof(struct worker)),
     };
     if (serv.workers == NULL) { die("calloc workers"); }
@@ -128,9 +131,8 @@ int listen_and_serve(uint16_t port, handler_func *handler_fn,
     return 0;
 }
 
-#define WORKER(w) ((struct worker *)w)
-
-static void cleanup_worker(void *w);
+#define WORKER(w) ((struct worker *) w)
+static void cleanup_worker(void *worker);
 
 static void *
 worker(void *w) {
@@ -141,7 +143,7 @@ worker(void *w) {
         die("malloc: worker %d", WORKER(w)->id);
     }
 
-    pthread_cleanup_push(cleanup_worker, buf);
+    pthread_cleanup_push(cleanup_worker, w);
 
     while(1) {
         pthread_mutex_lock(&jobs_mutex);
@@ -189,7 +191,7 @@ worker(void *w) {
             // TODO:
             // - logging
             // - timeout
-            serv.handler(fd, buf);
+            serv.handler(w, buf);
         } while (1);
 
         close(fd);
@@ -199,18 +201,18 @@ worker(void *w) {
     pthread_cleanup_pop(1);
 }
 
-int send_msg(const int fd, const char *format, ...) {
+int send_msg(struct worker *w, const char *format, ...) {
     va_list args;
     va_start(args, format);
     char* msg = NULL;
-    if (vasprintf(&msg, format, args) == -1) die("send_msg");
+    if (vasprintf(&msg, format, args) == -1) { die("send_msg"); }
     va_end(args);
 
     size_t msglen = strlen(msg),
-           nsend = send(fd, msg, msglen, 0);
+           nsend = send(w->fd, msg, msglen, 0);
     free(msg);
     if (nsend == -1) {
-        printf("send on fd %d failed: %s\n", fd, strerror(errno));
+        printf("send on fd %d failed: %s\n", w->fd, strerror(errno));
         return -1;
     }
     return 0;
@@ -219,9 +221,6 @@ int send_msg(const int fd, const char *format, ...) {
 void server_cleanup() {
     for (int i = 0; i < NUM_WORKERS; ++i) {
         pthread_cancel(serv.workers[i].thread);
-        if (serv.workers[i].fd != 0) {
-            close(serv.workers[i].fd);
-        }
     }
     free(serv.workers);
     close(serv.fd);
@@ -229,15 +228,19 @@ void server_cleanup() {
     serv = (struct server){0};
 }
 
-static void cleanup_worker(void *buf) {
-    free(buf);
+static void cleanup_worker(void *w) {
+    close(WORKER(w)->fd);
+    WORKER(w)->fd = -1;
+
+    free(WORKER(w)->data);
+    WORKER(w)->data = NULL;
 }
 
 static void sigint_handler(int arg) {
     server_cleanup();
 
-    if (serv.user_cleanup_fn) {
-        serv.user_cleanup_fn();
+    if (serv.cleanup) {
+        serv.cleanup();
     }
 
     exit(0);

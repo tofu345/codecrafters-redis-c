@@ -29,18 +29,19 @@ void resp_destroy(resp *elem) {
         case r_Error:
         case r_String:
         case r_BulkString:
-            return;
+            break;
 
         case r_Array:
             for (int i = 0; i < elem->length; i++) {
                 resp_destroy(&elem->data.array[i]);
             }
             free(elem->data.array);
-            return;
+            break;
 
         case r_Integer:
-            return;
+            break;
     }
+    *elem = (resp){0};
 }
 
 // return [resp_type] of `p.input[p.cursor]`
@@ -55,7 +56,6 @@ get_resp_type(parser *p) {
         default:
             die("invalid resp type: '%c' in input: %s",
                     p->input[p->cursor], p->input);
-            return 0;
     }
 }
 
@@ -95,6 +95,7 @@ int _parse(parser *p, resp *elem) {
     const char *end = elem->data.string + elem->length;
     switch (elem->type) {
         case r_String:
+        case r_Error:
             return 0;
 
         case r_Integer:
@@ -160,16 +161,19 @@ int _parse(parser *p, resp *elem) {
 void _resp_display(resp *elem, FILE *s) {
     switch (elem->type) {
         case r_String:
-        case r_Error:
             fprintf(s, "+%.*s", elem->length, elem->data.string);
-            return;
+            break;
+
+        case r_Error:
+            fprintf(s, "-%.*s", elem->length, elem->data.string);
+            break;
 
         case r_BulkString:
             if (elem->length == 0)
                 fprintf(s, "$(empty)");
             else
                 fprintf(s, "$%.*s", elem->length, elem->data.string);
-            return;
+            break;
 
         case r_Array:
             fprintf(s, "*[");
@@ -182,15 +186,14 @@ void _resp_display(resp *elem, FILE *s) {
                 _resp_display(&elem->data.array[last], s);
             }
             fprintf(s, "]");
-            return;
+            break;
 
         case r_Integer:
-            fprintf(s, ":%lld", elem->data.integer);
-            return;
+            fprintf(s, ":%ld", elem->data.integer);
+            break;
 
         default:
             die("RESP type %d not handled.", elem->type);
-            return;
     }
 }
 

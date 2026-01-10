@@ -11,10 +11,10 @@
 #include "parser.h"
 #include "utils.h"
 
-int handler(const int conn_fd, const char *data);
-int echo_handler(const int conn_fd, resp req);
-int set_handler(const int conn_fd, resp req);
-int get_handler(const int conn_fd, resp req);
+int handler(struct worker *, const char *data);
+int echo(struct worker *, resp);
+int set(struct worker *, resp);
+int get(struct worker *, resp);
 
 void cleanup(void);
 
@@ -41,10 +41,10 @@ int main(int argc, char **argv) {
 
 #define STR_IS(msg, r) strncasecmp(msg, r.data.string, r.length) == 0
 
-int handler(const int conn_fd, const char *data) {
+int handler(struct worker *w, const char *data) {
     resp req = parse(data);
-    if (req.type == 0 || req.type != r_Array || !STRING(req.data.array[0])) {
-        return send_msg(conn_fd, "-Invalid command\r\n");
+    if (req.type == 0 || req.type != r_Array || !string(req.data.array[0])) {
+        return send_msg(w, "-Invalid command\r\n");
     }
 
     resp cmd = req.data.array[0];
@@ -59,44 +59,44 @@ int handler(const int conn_fd, const char *data) {
 
     int err;
     if (STR_IS("PING", cmd)) {
-        err = send_msg(conn_fd, "+PONG\r\n");
+        err = send_msg(w, "+PONG\r\n");
 
     } else if (STR_IS("ECHO", cmd)) {
-        err = echo_handler(conn_fd, req);
+        err = echo(w, req);
 
     } else if (STR_IS("GET", cmd)) {
-        err = get_handler(conn_fd, req);
+        err = get(w, req);
 
     } else if (STR_IS("SET", cmd)) {
-        err = set_handler(conn_fd, req);
+        err = set(w, req);
 
     } else {
-        err = send_msg(conn_fd, "-Command not handled\r\n");
+        err = send_msg(w, "-Command not handled\r\n");
     }
 
     resp_destroy(&req);
     return err;
 }
 
-int echo_handler(const int conn_fd, resp req) {
-    if (req.length != 2 || !STRING(req.data.array[1])) {
-        return send_msg(conn_fd, "-Invalid ECHO command\r\n");
+int echo(struct worker *w, resp req) {
+    if (req.length != 2 || !string(req.data.array[1])) {
+        return send_msg(w, "-Invalid ECHO command\r\n");
     }
 
     resp echo = req.data.array[1];
     char* msg = NULL;
     if (asprintf(&msg, "$%d\r\n%s\r\n", echo.length, echo.data.string) == -1) {
-        return send_msg(conn_fd, "-Error sending message\r\n");
+        return send_msg(w, "-Error sending message\r\n");
     }
 
-    int err = send_msg(conn_fd, msg);
+    int err = send_msg(w, msg);
     free(msg);
     return err;
 }
 
-int get_handler(const int conn_fd, resp req) {
-    if (req.length != 2 || !STRING(req.data.array[1])) {
-        return send_msg(conn_fd, "-Invalid GET command\r\n");
+int get(struct worker *w, resp req) {
+    if (req.length != 2 || !string(req.data.array[1])) {
+        return send_msg(w, "-Invalid GET command\r\n");
     }
 
     resp key = req.data.array[1];
@@ -107,32 +107,32 @@ int get_handler(const int conn_fd, resp req) {
     pthread_mutex_unlock(&store_mutex);
 
     if (errno == ENOKEY) {
-        return send_msg(conn_fd, "$-1\r\n");
+        return send_msg(w, "$-1\r\n");
     }
 
     size_t len = strlen(val);
     char* msg = NULL;
     if (asprintf(&msg, "$%zu\r\n%s\r\n", strlen(val), val) == -1) {
-        return send_msg(conn_fd, "-Error sending message\r\n");
+        return send_msg(w, "-Error sending message\r\n");
     }
 
-    int err = send_msg(conn_fd, msg);
+    int err = send_msg(w, msg);
     free(msg);
     return err;
 }
 
-int set_handler(const int conn_fd, resp req) {
+int set(struct worker *w, resp req) {
     if (req.length != 3
-            || !STRING(req.data.array[1])
-            || !STRING(req.data.array[2])) {
-        return send_msg(conn_fd, "-Invalid SET command\r\n");
+            || !string(req.data.array[1])
+            || !string(req.data.array[2])) {
+        return send_msg(w, "-Invalid SET command\r\n");
     }
 
     resp key = req.data.array[1];
     resp val = req.data.array[2];
     char *val_str = strndup(val.data.string, val.length);
     if (val_str == NULL) {
-        return send_msg(conn_fd, "-Could not execute SET command\r\n");
+        return send_msg(w, "-Could not execute SET command\r\n");
     }
 
     uint64_t hash = hash_fnv1a_(key.data.string, key.length);
@@ -142,12 +142,12 @@ int set_handler(const int conn_fd, resp req) {
     pthread_mutex_unlock(&store_mutex);
 
     if (errno == ENOMEM) {
-        return send_msg(conn_fd, "-Could not execute SET command\r\n");
+        return send_msg(w, "-Could not execute SET command\r\n");
     } else if (res != val_str) {
         free((char *) res); // previous value
     }
 
-    return send_msg(conn_fd, "+OK\r\n");
+    return send_msg(w, "+OK\r\n");
 }
 
 void cleanup(void) {
